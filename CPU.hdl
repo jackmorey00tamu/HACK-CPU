@@ -1,0 +1,128 @@
+// Jack Morey 902009834
+
+/**
+ * The Hack CPU (Central Processing unit), consisting of an ALU,
+ * two registers named A and D, and a program counter named PC.
+ * The CPU is designed to fetch and execute instructions written in 
+ * the Hack machine language. In particular, functions as follows:
+ * Executes the inputted instruction according to the Hack machine 
+ * language specification. The D and A in the language specification
+ * refer to CPU-resident registers, while M refers to the external
+ * memory location addressed by A, i.e. to Memory[A]. The inM input 
+ * holds the value of this location. If the current instruction needs 
+ * to write a value to M, the value is placed in outM, the address 
+ * of the target location is placed in the addressM output, and the 
+ * writeM control bit is asserted. (When writeM==0, any value may 
+ * appear in outM). The outM and writeM outputs are combinational: 
+ * they are affected instantaneously by the execution of the current 
+ * instruction. The addressM and pc outputs are clocked: although they 
+ * are affected by the execution of the current instruction, they commit 
+ * to their new values only in the next time step. If reset==1 then the 
+ * CPU jumps to address 0 (i.e. pc is set to 0 in next time step) rather 
+ * than to the address resulting from executing the current instruction. 
+ */
+ 
+ //i was hoping i could just modify the toy cpu code and throw in an alu and call it a day
+ //twas not the case
+ 
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+	
+	
+    
+	//register management
+	Mux16(a=instruction,b=ALUOut,sel=instruction[15],out=ARegisterIn);
+	
+	And(a=instruction[3],b=instruction[15],out=writeM);
+	And(a=instruction[4],b=instruction[15],out=writeD);
+	And(a=instruction[5],b=instruction[15],out=writeA);
+	
+	Not(in=instruction[15],out=aInst);
+	
+	Or(a=aInst,b=writeA,out=actuallyWriteA);
+	
+	ARegister(in=ARegisterIn,load=actuallyWriteA,out=ARegisterOut, out[0..14]=addressM);
+	
+	DRegister(in=ALUOut,load=writeD,out=DRegisterOut);
+	
+	Mux16(a=ARegisterOut, b=inM, sel=instruction[12], out=YInput);
+	
+	//ALU
+	//in: x[16], y[16], zx (Zero the x input), nx (Negate the x input), zy (Zero the y input), ny (Negate the y input), f (Function code: 1 for add, 0 for and), no (negate the out output)
+	//out: out[16], zr( 1 if out==0), ng (1 if out<0)
+	
+	ALU(x=DRegisterOut, y=YInput, zx=instruction[11], nx=instruction[10], zy=instruction[9], ny=instruction[8], f=instruction[7], no=instruction[6], out=ALUOut, out=outM, zr=isOutputJEQ, ng=isOutputJLT);
+	
+	//havin a bunch of fun figurin out if we're supposed to jump :')
+	
+	//j1 = a, j2=b, j3=c
+	
+	Not(in=instruction[2],out=na);
+	Not(in=instruction[1],out=nb);
+	Not(in=instruction[0],out=nc);
+	
+	//case 111
+	And(a=instruction[2],b=instruction[1],out=aandb);
+	And(a=instruction[0],b=aandb,out=jmp);
+	//case 110
+	And(a=aandb,b=nc,out=jle);
+	//case 101
+	And(a=instruction[2],b=nb,out=aandnb);
+	And(a=aandnb,b=instruction[0],out=jne);
+	//case 100
+	And(a=aandnb,b=nc,out=jlt);
+	//case 011
+	And(a=na,b=instruction[1],out=naandb);
+	And(a=naandb,b=instruction[0],out=jge);
+	//case 010
+	And(a=naandb,b=nc,out=jeq);
+	//case 001
+	And(a=na,b=nb,out=anorb);
+	And(a=anorb,b=instruction[0],out=jgt);
+	//case 000
+	
+	//...
+	
+	//there is no case 000. if none of the following jmp codes trigger then they dont trigger. so no null needed lol
+	
+	//parsing in a very... explicit manner 
+	Not(in=isOutputJEQ,out=isOutputJNE);
+	Not(in=isOutputJLT,out=isOutputJGE);
+	
+	Or(a=isOutputJEQ,b=isOutputJLT,out=isOutputJLE);
+	
+	Not(in=isOutputJLE,out=isOutputJGT);
+	
+	And(a=isOutputJEQ,b=jeq,out=doJEQ);
+	And(a=isOutputJGE,b=jge,out=doJGE);
+	And(a=isOutputJGT,b=jgt,out=doJGT);
+	And(a=isOutputJLE,b=jle,out=doJLE);
+	And(a=isOutputJLT,b=jlt,out=doJLT);
+	And(a=isOutputJNE,b=jne,out=doJNE);
+	
+	Or(a=doJEQ,b=doJGE,out=doJumpA);
+	Or(a=doJumpA,b=doJGT,out=doJumpB);
+	Or(a=doJumpB,b=doJLE,out=doJumpC);
+	Or(a=doJumpC,b=doJLT,out=doJumpD);
+	Or(a=doJumpD,b=doJNE,out=doJumpE);
+	Or(a=doJumpE,b=jmp,out=doJumpAlmost);
+	
+	And(a=doJumpAlmost,b=instruction[15], out=doJump);
+	
+	//program counter
+	//IN  in[16], load, inc, reset;
+	PC(in=ARegisterOut,load=doJump,inc=true,reset=reset,out[0..14]=pc);
+	
+}
